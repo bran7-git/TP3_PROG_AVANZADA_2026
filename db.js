@@ -17,9 +17,30 @@ export const pool = new Pool({
     user: process.env.POSTGRES_USER,
     password: process.env.POSTGRES_PASSWORD,
     database: process.env.POSTGRES_DB,
+    // Opciones de resiliencia para evitar ENOTFOUND al reiniciar contenedores
+    connectionTimeoutMillis: 5000,
+    idleTimeoutMillis: 30000,
 })
 
-// Chequeo simple al arrancar para dar un error claro si la base no responde
-pool.query('SELECT NOW()')
-    .then(() => console.log('✅ Conectado a Postgres'))
-    .catch((err) => console.error('❌ No se pudo conectar a Postgres:', err.message))
+// Escuchador de errores en el pool para evitar que un corte puntual tumbe la API
+pool.on('error', (err) => {
+    console.error('⚠️ Error inesperado en el pool de PostgreSQL:', err.message)
+})
+
+// Chequeo con reintentos al arrancar la aplicación
+const connectWithRetry = async (retries = 5, delay = 2000) => {
+    for (let i = 0; i < retries; i++) {
+        try {
+            await pool.query('SELECT NOW()')
+            console.log('✅ Conectado a Postgres')
+            return
+        } catch (err) {
+            console.error(`❌ Intento ${i + 1}/${retries} - No se pudo conectar a Postgres: ${err.message}`)
+            if (i < retries - 1) {
+                await new Promise((res) => setTimeout(res, delay))
+            }
+        }
+    }
+}
+
+connectWithRetry()
